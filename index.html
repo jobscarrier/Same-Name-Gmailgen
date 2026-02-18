@@ -1,0 +1,4322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!--
+================================================================================
+GMAIL NAME GENERATOR - README
+================================================================================
+PURPOSE:
+  This tool takes a list of Gmail addresses (or usernames) and deterministically
+  assigns each one a unique First Name, Last Name, and Gender label.
+
+HOW TO USE:
+  1. Paste Gmail addresses (one per line or comma-separated) into the
+     "Gmail Addresses" textarea.
+  2. Optionally edit the Male/Female/Surname lists in the "Name Lists" section.
+  3. Click "Generate Names" to produce the output table.
+  4. Use the copy/download buttons to export results.
+
+HOW TO ADD NAMES:
+  - In the "Name Lists" panel, type or paste names (one per line) into:
+    • Male First Names  • Female First Names  • Surnames
+  - Click "Save to localStorage" to persist changes across sessions.
+  - Click "Load from localStorage" to restore saved lists.
+  - Click "Load Example Lists" to reset to the built-in 1000-name USA lists.
+
+HOW DETERMINISTIC MAPPING WORKS:
+  1. The email string is hashed using a FNV-1a-inspired 32-bit hash.
+  2. The hash determines: gender (odd=male, even=female), first-name index,
+     surname index.
+  3. If two emails produce the same First+Last pair, a numeric suffix (_2, _3…)
+     is appended to the last name to guarantee uniqueness.
+  4. Username extraction: if the local-part of the email contains a recognizable
+     name fragment (letters separated by dots, underscores, or digits), that
+     fragment is used to seed name matching — otherwise the hash drives selection.
+
+DETERMINISTIC REPRODUCIBILITY:
+  Same email + same name lists → same output, every time.
+
+OPTIONAL OPENAI INTEGRATION:
+  Enter your OpenAI API key in the "OpenAI" section and enable the toggle.
+  The tool will call GPT to suggest creative names. No key = offline mode.
+================================================================================
+-->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gmail Name Generator</title>
+<style>
+  /* ── Reset & Base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f0f4f8;
+    --surface: #ffffff;
+    --surface2: #f8fafc;
+    --border: #e2e8f0;
+    --primary: #4f46e5;
+    --primary-hover: #4338ca;
+    --primary-light: #eef2ff;
+    --secondary: #0ea5e9;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --text: #1e293b;
+    --text-muted: #64748b;
+    --text-light: #94a3b8;
+    --radius: 10px;
+    --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.05);
+    --shadow-md: 0 4px 12px rgba(0,0,0,.1);
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* ── Header ── */
+  .header {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #0ea5e9 100%);
+    color: #fff; padding: 1.5rem 2rem; text-align: center;
+    box-shadow: 0 4px 20px rgba(79,70,229,.3);
+  }
+  .header h1 { font-size: clamp(1.4rem, 4vw, 2rem); font-weight: 800; letter-spacing: -.5px; }
+  .header p { margin-top: .4rem; opacity: .85; font-size: .9rem; }
+  .badge {
+    display: inline-block; background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.3);
+    border-radius: 20px; padding: .2rem .8rem; font-size: .75rem; margin-top: .5rem;
+  }
+
+  /* ── Layout ── */
+  .container { max-width: 1600px; margin: 0 auto; padding: 1.5rem; }
+  .layout { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.2rem; align-items: start; }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 700px)  { .layout { grid-template-columns: 1fr; } }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1.25rem;
+    box-shadow: var(--shadow); animation: fadeIn .3s ease;
+  }
+  .card-title {
+    font-size: .8rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text-muted); margin-bottom: 1rem;
+    display: flex; align-items: center; gap: .5rem;
+  }
+  .card-title .icon { font-size: 1rem; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* ── Form Elements ── */
+  label { display: block; font-size: .8rem; font-weight: 600; color: var(--text-muted); margin-bottom: .35rem; }
+  textarea, input[type=text], input[type=password], select {
+    width: 100%; border: 1.5px solid var(--border); border-radius: 7px;
+    padding: .55rem .75rem; font-size: .85rem; font-family: var(--font);
+    background: var(--surface2); color: var(--text);
+    transition: border-color .2s, box-shadow .2s; resize: vertical;
+  }
+  textarea:focus, input:focus, select:focus {
+    outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,70,229,.12);
+  }
+  .input-row { margin-bottom: .9rem; }
+  .check-row { display: flex; align-items: center; gap: .5rem; margin: .5rem 0; font-size: .85rem; cursor: pointer; }
+  .check-row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex; align-items: center; gap: .4rem; padding: .5rem 1rem;
+    border: none; border-radius: 7px; font-size: .82rem; font-weight: 600; cursor: pointer;
+    transition: background .18s, transform .12s, box-shadow .18s; white-space: nowrap;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn-primary { background: var(--primary); color: #fff; box-shadow: 0 2px 8px rgba(79,70,229,.3); }
+  .btn-primary:hover { background: var(--primary-hover); box-shadow: 0 4px 14px rgba(79,70,229,.4); }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1.5px solid var(--border); }
+  .btn-secondary:hover { background: var(--border); }
+  .btn-success { background: var(--success); color: #fff; }
+  .btn-success:hover { background: #059669; }
+  .btn-warning { background: var(--warning); color: #fff; }
+  .btn-warning:hover { background: #d97706; }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-sm { padding: .35rem .7rem; font-size: .76rem; }
+  .btn-lg { padding: .75rem 1.5rem; font-size: .95rem; width: 100%; justify-content: center; font-size: 1rem; }
+  .btn-group { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .7rem; }
+
+  /* ── Name List Tabs ── */
+  .tab-bar { display: flex; border-bottom: 2px solid var(--border); margin-bottom: 1rem; }
+  .tab { padding: .5rem 1rem; font-size: .8rem; font-weight: 600; color: var(--text-muted);
+    cursor: pointer; border-bottom: 2.5px solid transparent; margin-bottom: -2px; transition: color .2s, border-color .2s; }
+  .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ── Results ── */
+  .results-card { grid-column: 1 / -1; }
+  .stats-bar { display: flex; flex-wrap: wrap; gap: .8rem; margin-bottom: 1rem; }
+  .stat-box {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+    padding: .5rem .9rem; text-align: center; min-width: 100px; flex: 1;
+  }
+  .stat-box .num { font-size: 1.4rem; font-weight: 800; color: var(--primary); }
+  .stat-box .lbl { font-size: .7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+
+  /* ── Table ── */
+  .table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; font-size: .83rem; }
+  thead th {
+    background: var(--primary-light); color: var(--primary); font-weight: 700;
+    padding: .7rem .9rem; text-align: left; border-bottom: 2px solid var(--border);
+    white-space: nowrap; cursor: pointer; user-select: none; position: sticky; top: 0;
+  }
+  thead th:hover { background: #dde5ff; }
+  thead th .sort-icon { opacity: .5; font-size: .7rem; }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background .12s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--primary-light); }
+  tbody td { padding: .6rem .9rem; }
+  .gender-badge {
+    display: inline-block; padding: .15rem .6rem; border-radius: 20px; font-size: .72rem; font-weight: 600;
+  }
+  .gender-badge.male { background: #dbeafe; color: #1d4ed8; }
+  .gender-badge.female { background: #fce7f3; color: #be185d; }
+  .row-num { color: var(--text-light); font-size: .75rem; }
+  .collision-mark { color: var(--warning); font-size: .7rem; margin-left: .3rem; title: "collision resolved"; }
+
+  /* ── Progress Bar ── */
+  .progress-wrap { display: none; margin: .8rem 0; }
+  .progress-wrap.visible { display: block; }
+  .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, var(--primary), var(--secondary));
+    border-radius: 3px; transition: width .15s; width: 0%; }
+  .progress-label { font-size: .75rem; color: var(--text-muted); margin-top: .3rem; text-align: right; }
+
+  /* ── Search / Filter ── */
+  .search-row { display: flex; gap: .6rem; margin-bottom: .8rem; align-items: center; flex-wrap: wrap; }
+  .search-input { flex: 1; min-width: 160px; }
+
+  /* ── Alerts ── */
+  .alert {
+    border-radius: 8px; padding: .7rem 1rem; font-size: .83rem; margin: .6rem 0;
+    display: none; align-items: flex-start; gap: .5rem;
+  }
+  .alert.visible { display: flex; }
+  .alert-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+  .alert-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+  .alert-info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+
+  /* ── OpenAI Panel ── */
+  .openai-panel { border: 2px dashed #a78bfa; background: #faf5ff; border-radius: 9px; padding: 1rem; margin-top: .8rem; }
+  .openai-panel .badge-ai { background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff;
+    border-radius: 5px; padding: .15rem .55rem; font-size: .72rem; font-weight: 700; }
+
+  /* ── Format Template ── */
+  .template-tokens { display: flex; flex-wrap: wrap; gap: .35rem; margin: .4rem 0; }
+  .token { background: var(--primary-light); color: var(--primary); border: 1px solid #c7d2fe;
+    border-radius: 5px; padding: .1rem .5rem; font-size: .72rem; font-family: monospace; cursor: pointer; }
+  .token:hover { background: #c7d2fe; }
+
+  /* ── Divider ── */
+  .section-divider { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
+
+  /* ── Scrollable name areas ── */
+  .name-textarea { height: 180px; font-size: .78rem; font-family: monospace; line-height: 1.6; }
+
+  /* ── Collapsible ── */
+  .collapsible-header {
+    display: flex; justify-content: space-between; align-items: center; cursor: pointer;
+    user-select: none; padding: .4rem 0;
+  }
+  .collapsible-header:hover { color: var(--primary); }
+  .collapsible-body { overflow: hidden; transition: max-height .3s ease; }
+
+  /* ── Responsive table text ── */
+  @media (max-width: 600px) {
+    table { font-size: .75rem; }
+    tbody td, thead th { padding: .5rem .6rem; }
+    .btn-lg { font-size: .9rem; }
+    .stats-bar { gap: .5rem; }
+    .stat-box .num { font-size: 1.1rem; }
+  }
+
+  /* ── Copy flash ── */
+  @keyframes flash { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+  .flash { animation: flash .4s ease; }
+
+  /* ── No results ── */
+  .empty-state { text-align: center; padding: 3rem 1rem; color: var(--text-muted); }
+  .empty-state .icon { font-size: 3rem; margin-bottom: .8rem; }
+
+  /* ── Highlight for loaded names ── */
+  .list-label-badge {
+    display: inline-block; font-size: .68rem; font-weight: 700; border-radius: 4px;
+    padding: .05rem .45rem; margin-left: .4rem; vertical-align: middle;
+  }
+  .badge-male { background: #dbeafe; color: #1d4ed8; }
+  .badge-female { background: #fce7f3; color: #be185d; }
+  .badge-surname { background: #d1fae5; color: #065f46; }
+  .badge-count { background: var(--primary-light); color: var(--primary); }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════ HEADER ═══════════════════════════════ -->
+<header class="header">
+  <h1>📧 Gmail Name Generator</h1>
+  <p>Deterministically assign unique First + Last names to Gmail addresses</p>
+  <span class="badge">🔒 100% Client-Side · Works Offline · No Server Required</span>
+</header>
+
+<div class="container">
+
+  <!-- ═══════════════════ TOP ALERT AREA ═══════════════════ -->
+  <div id="alertBox" class="alert" role="alert" aria-live="polite"></div>
+
+  <!-- ═══════════════════ MAIN LAYOUT ═══════════════════ -->
+  <div class="layout">
+
+    <!-- ══════════ COL 1: INPUT ══════════ -->
+    <div>
+
+      <!-- Gmail Input -->
+      <div class="card">
+        <div class="card-title"><span class="icon">📨</span> Gmail Addresses</div>
+        <div class="input-row">
+          <label for="emailInput">Paste emails or usernames (one per line or comma-separated)</label>
+          <textarea id="emailInput" rows="12" placeholder="john.doe@gmail.com&#10;shahinur&#10;user123@gmail.com&#10;alice.wonder&#10;..."
+            aria-label="Gmail addresses input"></textarea>
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="allowDuplicates" aria-label="Allow duplicate emails">
+          <label for="allowDuplicates" style="margin:0;cursor:pointer;">Allow duplicate emails in output</label>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary btn-lg" id="generateBtn" onclick="generateNames()" aria-label="Generate names">
+            ⚡ Generate Names
+          </button>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-secondary btn-sm" onclick="loadSampleEmails()" title="Fill sample Gmail addresses">
+            📋 Load Sample Emails
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="clearEmails()" title="Clear email input">
+            🗑️ Clear
+          </button>
+        </div>
+
+        <div class="progress-wrap" id="progressWrap">
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+          <div class="progress-label" id="progressLabel">Processing…</div>
+        </div>
+      </div>
+
+      <!-- Generation Options -->
+      <div class="card" style="margin-top:1.2rem;">
+        <div class="card-title"><span class="icon">⚙️</span> Generation Options</div>
+
+        <div class="input-row">
+          <label for="genderForce">Gender Assignment</label>
+          <select id="genderForce" aria-label="Gender force option">
+            <option value="hash">From Hash (auto)</option>
+            <option value="male">Force Male</option>
+            <option value="female">Force Female</option>
+            <option value="mixed">Alternating Mixed</option>
+          </select>
+        </div>
+
+        <div class="check-row">
+          <input type="checkbox" id="useRandom" onchange="toggleRandomSeed()" aria-label="Use random mode">
+          <label for="useRandom" style="margin:0;cursor:pointer;">Randomize instead of deterministic</label>
+        </div>
+        <div id="seedRow" class="input-row" style="display:none; margin-top:.5rem;">
+          <label for="seedInput">Random Seed (leave blank for true random)</label>
+          <input type="text" id="seedInput" placeholder="e.g. myseed42" aria-label="Random seed">
+        </div>
+
+        <hr class="section-divider">
+
+        <div class="input-row">
+          <label for="outputFormat">Output Format Template</label>
+          <div class="template-tokens">
+            <span class="token" onclick="insertToken('{email}')" title="Insert email token">{email}</span>
+            <span class="token" onclick="insertToken('{first}')" title="Insert first name token">{first}</span>
+            <span class="token" onclick="insertToken('{last}')" title="Insert last name token">{last}</span>
+            <span class="token" onclick="insertToken('{gender}')" title="Insert gender token">{gender}</span>
+          </div>
+          <input type="text" id="outputFormat" value="{email},{first},{last},{gender}"
+            placeholder="{email},{first},{last},{gender}" aria-label="Output format template">
+        </div>
+
+        <div class="input-row">
+          <label for="copyColumnSelect">Copy Single Column</label>
+          <select id="copyColumnSelect" aria-label="Select column to copy">
+            <option value="email">Email only</option>
+            <option value="name">Full Name only (First Last)</option>
+            <option value="email_name">Email + Full Name</option>
+            <option value="first">First Name only</option>
+            <option value="last">Last Name only</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- OpenAI Optional -->
+      <div class="card" style="margin-top:1.2rem;">
+        <div class="collapsible-header" onclick="toggleCollapse('openaiPanel')" aria-expanded="false" aria-controls="openaiPanel">
+          <div class="card-title" style="margin:0"><span class="icon">🤖</span> OpenAI Integration <span style="font-size:.65rem;color:var(--text-light);">(Optional)</span></div>
+          <span id="openaiToggleIcon">▼</span>
+        </div>
+        <div class="collapsible-body" id="openaiPanel" style="max-height:0; overflow:hidden;">
+          <div class="openai-panel" style="margin-top:.8rem;">
+            <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;">
+              <span class="badge-ai">AI</span>
+              <span style="font-size:.8rem;color:#6d28d9;font-weight:600;">Creative AI Names (Optional)</span>
+            </div>
+            <div class="check-row">
+              <input type="checkbox" id="useOpenAI" aria-label="Enable OpenAI name generation">
+              <label for="useOpenAI" style="margin:0;cursor:pointer;">Enable OpenAI creative names</label>
+            </div>
+            <div class="input-row" style="margin-top:.7rem;">
+              <label for="openAIKey">OpenAI API Key (sk-…)</label>
+              <input type="password" id="openAIKey" placeholder="sk-xxxxxxxxxxxxxxxx" aria-label="OpenAI API key">
+            </div>
+            <div class="input-row">
+              <label for="openAIModel">Model</label>
+              <select id="openAIModel" aria-label="OpenAI model">
+                <option value="gpt-4o-mini">gpt-4o-mini (fast & cheap)</option>
+                <option value="gpt-4o">gpt-4o</option>
+                <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+              </select>
+            </div>
+            <p style="font-size:.72rem;color:#7c3aed;margin-top:.4rem;">
+              ℹ️ No hard-coded keys. Uses <code>fetch()</code> to call
+              <code>https://api.openai.com/v1/chat/completions</code>.
+              Works offline if disabled.
+            </p>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /col1 -->
+
+    <!-- ══════════ COL 2: NAME LISTS ══════════ -->
+    <div>
+      <div class="card">
+        <div class="card-title"><span class="icon">📚</span> Name Lists</div>
+
+        <div class="tab-bar" role="tablist">
+          <div class="tab active" role="tab" onclick="switchTab('male')" id="tab-male" aria-selected="true">
+            Male <span class="list-label-badge badge-male" id="maleCount">0</span>
+          </div>
+          <div class="tab" role="tab" onclick="switchTab('female')" id="tab-female" aria-selected="false">
+            Female <span class="list-label-badge badge-female" id="femaleCount">0</span>
+          </div>
+          <div class="tab" role="tab" onclick="switchTab('surname')" id="tab-surname" aria-selected="false">
+            Surnames <span class="list-label-badge badge-surname" id="surnameCount">0</span>
+          </div>
+        </div>
+
+        <div id="tc-male" class="tab-content active">
+          <label>
+            Male First Names
+            <span class="list-label-badge badge-male">1000 USA Male Names</span>
+          </label>
+          <textarea id="maleNames" class="name-textarea"
+            oninput="updateCounts()" aria-label="Male first names list"></textarea>
+        </div>
+        <div id="tc-female" class="tab-content">
+          <label>
+            Female First Names
+            <span class="list-label-badge badge-female">1000 USA Female Names</span>
+          </label>
+          <textarea id="femaleNames" class="name-textarea"
+            oninput="updateCounts()" aria-label="Female first names list"></textarea>
+        </div>
+        <div id="tc-surname" class="tab-content">
+          <label>
+            Surnames
+            <span class="list-label-badge badge-surname">1000 USA Last Names</span>
+          </label>
+          <textarea id="surnameNames" class="name-textarea"
+            oninput="updateCounts()" aria-label="Surnames list"></textarea>
+        </div>
+
+        <div class="btn-group">
+          <button class="btn btn-secondary btn-sm" onclick="loadExampleLists()" title="Load the 1000 USA name lists">
+            🔄 Load Example Lists
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="clearLists()" title="Clear all name lists">
+            🗑️ Clear Lists
+          </button>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-success btn-sm" onclick="saveToLocalStorage()" title="Save name lists to browser storage">
+            💾 Save to localStorage
+          </button>
+          <button class="btn btn-warning btn-sm" onclick="loadFromLocalStorage()" title="Load saved name lists">
+            📂 Load from localStorage
+          </button>
+        </div>
+      </div>
+    </div><!-- /col2 -->
+
+    <!-- ══════════ COL 3: ACTIONS / SEARCH ══════════ -->
+    <div>
+      <!-- Export Actions -->
+      <div class="card">
+        <div class="card-title"><span class="icon">📤</span> Export & Actions</div>
+        <div class="btn-group" style="flex-direction:column;gap:.6rem;">
+          <button class="btn btn-primary" onclick="copyToClipboard('all')" id="copyAllBtn" aria-label="Copy all output to clipboard">
+            📋 Copy All (CSV)
+          </button>
+          <button class="btn btn-success" onclick="downloadFile('txt')" aria-label="Download as TXT">
+            ⬇️ Download .txt
+          </button>
+          <button class="btn btn-success" onclick="downloadFile('csv')" aria-label="Download as CSV">
+            ⬇️ Download .csv
+          </button>
+          <button class="btn btn-secondary" onclick="copyToClipboard('column')" aria-label="Copy selected column">
+            📋 Copy Column
+          </button>
+          <button class="btn btn-secondary" onclick="copyToClipboard('formatted')" aria-label="Copy with format template">
+            📋 Copy Formatted
+          </button>
+        </div>
+      </div>
+
+      <!-- Search/Filter -->
+      <div class="card" style="margin-top:1.2rem;">
+        <div class="card-title"><span class="icon">🔍</span> Search & Filter Results</div>
+        <div class="input-row">
+          <input type="text" id="searchInput" class="search-input" placeholder="Filter by email or name…"
+            oninput="filterTable()" aria-label="Search results">
+        </div>
+        <div class="input-row">
+          <label for="sortCol">Sort by</label>
+          <select id="sortCol" onchange="sortTable()" aria-label="Sort column">
+            <option value="index"># (Original Order)</option>
+            <option value="email">Email</option>
+            <option value="first">First Name</option>
+            <option value="last">Last Name</option>
+            <option value="gender">Gender</option>
+          </select>
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="sortAsc" onchange="sortTable()" aria-label="Sort ascending">
+          <label for="sortAsc" style="margin:0;cursor:pointer;">Ascending order</label>
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="filterMale" onchange="filterTable()" aria-label="Show male">
+          <label for="filterMale" style="margin:0;cursor:pointer;">Show Male only</label>
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="filterFemale" onchange="filterTable()" aria-label="Show female">
+          <label for="filterFemale" style="margin:0;cursor:pointer;">Show Female only</label>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="card" style="margin-top:1.2rem;">
+        <div class="card-title"><span class="icon">📊</span> Statistics</div>
+        <div class="stats-bar">
+          <div class="stat-box">
+            <div class="num" id="statTotal">0</div>
+            <div class="lbl">Total Inputs</div>
+          </div>
+          <div class="stat-box">
+            <div class="num" id="statUnique">0</div>
+            <div class="lbl">Unique Outputs</div>
+          </div>
+          <div class="stat-box">
+            <div class="num" id="statCollisions">0</div>
+            <div class="lbl">Collisions Fixed</div>
+          </div>
+        </div>
+        <div class="stats-bar">
+          <div class="stat-box">
+            <div class="num" id="statMale">0</div>
+            <div class="lbl">Male</div>
+          </div>
+          <div class="stat-box">
+            <div class="num" id="statFemale">0</div>
+            <div class="lbl">Female</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /col3 -->
+
+  </div><!-- /layout -->
+
+  <!-- ═══════════════════ RESULTS (full width) ═══════════════════ -->
+  <div class="card results-card" style="margin-top:1.2rem;">
+    <div class="card-title"><span class="icon">📋</span> Results</div>
+
+    <div id="emptyState" class="empty-state">
+      <div class="icon">📭</div>
+      <p>No results yet. Paste Gmail addresses above and click <strong>Generate Names</strong>.</p>
+    </div>
+
+    <div id="resultsSection" style="display:none;">
+      <div id="tableWrap" class="table-wrap">
+        <table id="resultsTable" aria-label="Generated names table">
+          <thead>
+            <tr>
+              <th onclick="setSortCol('index')" title="Sort by row number"># <span class="sort-icon" id="si-index"></span></th>
+              <th onclick="setSortCol('email')" title="Sort by email">Email <span class="sort-icon" id="si-email"></span></th>
+              <th onclick="setSortCol('first')" title="Sort by first name">First Name <span class="sort-icon" id="si-first"></span></th>
+              <th onclick="setSortCol('last')" title="Sort by last name">Last Name <span class="sort-icon" id="si-last"></span></th>
+              <th onclick="setSortCol('gender')" title="Sort by gender">Gender <span class="sort-icon" id="si-gender"></span></th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+      <div style="margin-top:.6rem;font-size:.75rem;color:var(--text-muted);">
+        ⭐ = collision resolved (suffix appended) &nbsp;|&nbsp;
+        Showing <span id="showingCount">0</span> of <span id="totalCount">0</span> results
+      </div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<!-- ═══════════════════════════════ JAVASCRIPT ═══════════════════════════════ -->
+<script>
+/* ============================================================
+   DATA: 1000 USA Male Names, 1000 USA Female Names, 1000 Last Names
+   ============================================================ */
+
+// ─── 1000 USA MALE NAMES ───
+const USA_MALE = `Liam
+Noah
+Oliver
+Theodore
+James
+Henry
+Mateo
+Elijah
+Lucas
+William
+Benjamin
+Levi
+Ezra
+Sebastian
+Jack
+Daniel
+Samuel
+Michael
+Ethan
+Asher
+John
+Hudson
+Luca
+Leo
+Elias
+Owen
+Alexander
+Dylan
+Santiago
+Julian
+David
+Joseph
+Matthew
+Luke
+Jackson
+Maverick
+Miles
+Wyatt
+Thomas
+Isaac
+Jacob
+Mason
+Gabriel
+Anthony
+Carter
+Logan
+Aiden
+Grayson
+Caleb
+Cooper
+Charles
+Roman
+Josiah
+Ezekiel
+Thiago
+Isaiah
+Joshua
+Wesley
+Jayden
+Bennett
+Christopher
+Nathan
+Angel
+Nolan
+Waylon
+Cameron
+Brooks
+Andrew
+Beau
+Weston
+Rowan
+Adrian
+Lincoln
+Enzo
+Ian
+Kai
+Christian
+Axel
+Aaron
+Theo
+Silas
+Walker
+Jonathan
+Leonardo
+Everett
+Micah
+Ryan
+August
+Gael
+Robert
+Jose
+Eli
+Jeremiah
+Luka
+Amir
+Jaxon
+Parker
+Colton
+Myles
+Adam
+Atlas
+Xavier
+Easton
+Jordan
+Arthur
+Landon
+Austin
+Dominic
+Adriel
+Damian
+Vincent
+River
+Emiliano
+Jace
+Archer
+Lorenzo
+Jameson
+Nicholas
+Emmett
+Milo
+Harrison
+Giovanni
+Carson
+George
+Kayden
+Jonah
+Greyson
+Hunter
+Graham
+Luis
+Declan
+Sawyer
+Jasper
+Ryder
+Carlos
+Connor
+Juan
+Matteo
+Dawson
+Calvin
+Leon
+Dean
+Evan
+Nathaniel
+Diego
+Arlo
+Bryson
+Jason
+Malachi
+Elliot
+Zion
+Emilio
+Ivan
+Hayden
+Stetson
+Jude
+Legend
+Matias
+Callum
+Hayes
+Jett
+Cole
+Elliott
+Jesus
+Ace
+Beckett
+Alan
+Beckham
+Jayce
+Braxton
+Jaxson
+Amari
+Chase
+Rhett
+Max
+Charlie
+Felix
+Kingston
+Judah
+Antonio
+Emmanuel
+Maxwell
+Ryker
+Alejandro
+Nicolas
+Barrett
+Jesse
+Ashton
+Miguel
+Brayden
+Tyler
+Peter
+Camden
+Zachary
+Tatum
+Kevin
+Andres
+Finn
+Justin
+Tucker
+Bentley
+Zayden
+Messiah
+Abraham
+Alex
+Adonis
+Kaiden
+Timothy
+Knox
+Tate
+Caden
+Ayden
+Nico
+Victor
+Maddox
+Xander
+Oscar
+Colter
+Joel
+Abel
+Patrick
+Rafael
+Griffin
+Brody
+Jaziel
+Rory
+Eithan
+Edward
+Riley
+Brandon
+Milan
+Richard
+Malakai
+Ismael
+Kyrie
+Louis
+Elian
+Kairo
+Cohen
+Nash
+Grant
+Callan
+Dallas
+Harvey
+Muhammad
+Mark
+Javier
+Karter
+Zayn
+Crew
+Eric
+Simon
+Aziel
+Cyrus
+Gavin
+Marcus
+Ronan
+Derek
+Avery
+Omar
+Lane
+Warren
+Lennox
+Paul
+Blake
+Jeremy
+Tristan
+Lukas
+Steven
+Emerson
+Walter
+Cade
+Ellis
+Otto
+Phoenix
+Colt
+Atticus
+Kaleb
+Israel
+Tobias
+Holden
+Saint
+Romeo
+Kenneth
+Jorge
+Angelo
+Remington
+Paxton
+Cody
+Finley
+Kayson
+Koa
+Kash
+Josue
+Ares
+Hendrix
+Bryce
+Maximiliano
+Zyaire
+Reid
+Brian
+Bodhi
+Cruz
+Kaden
+Bryan
+Zane
+Francisco
+Martin
+Brady
+Casey
+Shepherd
+Aidan
+Baker
+Malcolm
+Jax
+Cash
+Clayton
+Kohen
+Leonel
+Cristian
+Bowen
+Dante
+Ali
+Jaylen
+Orion
+Briggs
+Jensen
+Dakota
+Preston
+Maximus
+Gideon
+Erick
+Archie
+Colin
+Sonny
+Shiloh
+Mathias
+Ezequiel
+Sullivan
+Joaquin
+Wade
+King
+Niko
+Damien
+Kade
+Bodie
+Dariel
+Luciano
+Cayden
+Andre
+Manuel
+Fernando
+Colson
+Rhys
+Cairo
+Anderson
+Kyler
+Onyx
+Ibrahim
+Cesar
+Travis
+Santino
+Callahan
+Bradley
+Baylor
+Banks
+Russell
+Desmond
+Killian
+Grady
+Rylan
+Sterling
+Kylo
+Eduardo
+Ricardo
+Wells
+Stephen
+Zander
+Raymond
+Hector
+Eliam
+Edwin
+Titus
+Iker
+Franklin
+Kamari
+Marco
+Spencer
+Julius
+Khalil
+Marshall
+Wilder
+Jared
+Jaden
+Kashton
+Jay
+Karson
+Mario
+Ari
+Remy
+Pedro
+Sergio
+Hugo
+Prince
+Winston
+Pablo
+Forrest
+Augustus
+Kobe
+Oakley
+Daxton
+Tadeo
+Sage
+Apollo
+Lawson
+Kian
+Solomon
+Chance
+Kayce
+Raphael
+Reed
+Jake
+Frederick
+Armani
+Hank
+Nehemiah
+Royal
+Kameron
+Malik
+Alijah
+Kane
+Dalton
+Lewis
+Noel
+Benson
+Sean
+Clark
+Miller
+Kyle
+Kieran
+Sutton
+Fabian
+Tanner
+Marcelo
+Rowen
+Isaias
+Zayne
+Nasir
+Raiden
+Francis
+Bo
+Valentino
+Rome
+Damon
+Reece
+Esteban
+Edgar
+Johnny
+Kylian
+Tyson
+Uriel
+Royce
+Cillian
+Koda
+Kyson
+Eden
+Jalen
+Frank
+Conrad
+Jasiah
+Matthias
+Zaire
+Corbin
+Asa
+Yusuf
+Erik
+Callen
+Kendrick
+Odin
+Brantley
+Rodrigo
+Marcos
+Gianni
+Alexis
+Lucian
+Denver
+Sylas
+Andy
+Collin
+Hezekiah
+Moshe
+Finnegan
+Ronin
+Atreus
+Adan
+Emanuel
+Quinn
+Mack
+Leandro
+Rocco
+Ruben
+Ledger
+Azariah
+Donovan
+Moses
+Kaizen
+Elio
+Leonidas
+Lawrence
+Tripp
+Ariel
+Alonzo
+Kaison
+Lian
+Devin
+Rio
+Johnathan
+Ayaan
+Gunner
+Jeffrey
+Philip
+Samson
+Moises
+Lucca
+Musa
+Camilo
+Hamza
+Ridge
+Kolton
+Morgan
+Troy
+Kylan
+Amiri
+Boone
+Makai
+Johan
+Bruce
+Dorian
+Gregory
+Pierce
+Roy
+Drew
+Clay
+Caiden
+Enrique
+Jamir
+Leland
+Mohamed
+Alessandro
+Deacon
+Augustine
+Dominick
+Roberto
+Kasen
+Zain
+Jonas
+Emir
+Seth
+Saul
+Jamari
+Lionel
+Garrett
+Jaiden
+Fletcher
+Scott
+Armando
+Cassius
+Kason
+Zachariah
+Ford
+Soren
+Zaiden
+Allen
+Louie
+Ronald
+Alden
+Arturo
+Caspian
+Rayan
+Major
+Arjun
+Colby
+Eliel
+Krew
+Ander
+Kenzo
+Maximilian
+Memphis
+Nikolai
+Samir
+Ocean
+Anakin
+Gerardo
+Keegan
+Maximo
+Mohammed
+Kaysen
+Julio
+Mohammad
+Gunnar
+Shane
+Ozzy
+Zakai
+Sincere
+Jaime
+Albert
+Azriel
+Izaiah
+Jaxton
+Raul
+Yosef
+Creed
+Rhodes
+Princeton
+Porter
+Cassian
+Omari
+Tru
+Chosen
+Reese
+Jayceon
+Jayson
+Jamie
+Reign
+Trevor
+Phillip
+Boston
+Kamden
+Crue
+Eliseo
+Colsen
+Keanu
+Mauricio
+Salem
+Dario
+Dax
+Jase
+Shawn
+Vicente
+Gustavo
+Danny
+Mylo
+Kyro
+Wilson
+Davis
+Jakari
+Jakai
+Truett
+Hassan
+Chris
+Sam
+Brixton
+Kyaire
+Uriah
+Azael
+Westley
+Rocky
+Peyton
+Sevyn
+Dilan
+Drake
+Zaid
+Roland
+Dereck
+Braylen
+Harlan
+Taylor
+Riggs
+Ahmad
+Cal
+Marvin
+Donald
+Leonard
+Nathanael
+Aarav
+Abdiel
+Kareem
+Corey
+Emmitt
+Wylder
+Koen
+Junior
+Zyair
+Zayd
+Dustin
+Wayne
+Ahmed
+Madden
+Quincy
+Bellamy
+Lachlan
+Layton
+Amias
+Chaim
+Layne
+Mac
+Amos
+Briar
+Carmelo
+Aries
+Bruno
+Houston
+Julien
+Trace
+Brock
+Yahya
+Conor
+Dennis
+Duke
+Abram
+Jefferson
+Vincenzo
+Izan
+Lee
+Finnley
+Brayan
+Raylan
+Enoch
+Avyaan
+Dexter
+Salvador
+Case
+Misael
+Forest
+Nikolas
+Westin
+Braylon
+Clyde
+Ryland
+Otis
+Tommy
+Zeke
+Yehuda
+Tomas
+Azrael
+Dutton
+Flynn
+Chandler
+Idris
+Zamir
+Ambrose
+Franco
+Huxley
+Wes
+Chozen
+Darius
+Valentin
+Alberto
+Magnus
+Roger
+Benicio
+Brycen
+Marcel
+Ryatt
+Zahir
+Keith
+Rayden
+Jamison
+Teo
+Skyler
+Blaze
+Cayson
+Hugh
+Yahir
+Cannon
+Yousef
+Bjorn
+Noe
+Alonso
+Alvaro
+Evander
+Kenai
+Aurelio
+Jahmir
+Lochlan
+Aron
+Harry
+Nelson
+Ray
+Alfredo
+Abdullah
+Aryan
+Conner
+Lennon
+Bridger
+Westyn
+Jasiel
+Quentin
+Trey
+Yael
+Alvin
+Casen
+Dakari
+Rex
+Damir
+Waylen
+Izael
+Jeremias
+Kaiser
+Kolson
+Ben
+Kyree
+Tony
+Bode
+Jesiah
+Eiden
+Jaxxon
+Jedidiah
+Remi
+Robin
+Santana
+Kyren
+Landen
+Ezrah
+Murphy
+Castiel
+Boden
+Derrick
+Karim
+Mustafa
+Rey
+Rudy
+Emery
+Ignacio
+Jettson
+Bear
+Edison
+Ricky
+Ramon
+Anders
+Gage
+Guillermo
+Santos
+Kolter
+Quinton
+Axton
+Abner
+Alfred
+Darwin
+Rohan
+Lance
+Avi
+Keaton
+Orlando
+Everest
+Jagger
+Elisha
+Heath
+Jones
+Thaddeus
+Allan
+Cason
+Douglas
+Issac
+Kenji
+Matheo
+Ty
+Asaiah
+Jimmy
+Arian
+Ozias
+Leroy
+Neil
+Watson
+Agustin
+Bryer
+Jerry
+Dillon
+Eren
+Eugene
+Ayan
+Melvin
+Nixon
+Reuben
+Stanley
+Grey
+Loyal
+Alec
+Casper
+Dane
+Azaiah
+Byron
+Joe
+Emory
+Zaylen
+Massimo
+Trenton
+Gatlin
+Joey
+Benny
+Jon
+Jrue
+Gian
+Seven
+Colten
+Ernesto
+Fisher
+Teddy
+Kaisen
+Zechariah
+Darian
+Salvatore
+Jericho
+Mitchell
+Alistair
+Calum
+Van
+Zev
+Langston
+Mccoy
+Ulises
+Lucien
+Benedict
+Carlo
+Coleson
+Meir
+Henrik
+Jiraiya
+Kellan
+Alfonso
+Azai
+Campbell
+Kylen
+Felipe
+Leif
+Rowdy
+Curtis
+Ameer
+Kiaan
+Maurice
+Krue
+Shimon
+Zyon
+Damari
+Jairo
+Khalid
+Kabir
+Jireh
+Mathew
+Shepard
+Eddie
+Isael
+Arden
+Cedric
+Nazir
+Alessio
+Khai
+Marcellus
+Wesson
+Yisroel
+Zymir
+Landyn
+Darren
+Legacy
+Devon
+Judson
+Vihaan
+Yitzchok
+Zen
+Dangelo
+Adler
+Aspen
+Brodie
+Kase
+Khaza
+Mordechai
+Dash
+Makari
+Neo
+Zavier
+Evren
+Imran
+Laith
+Cain
+Ira
+Osiris
+Shlomo
+Yaakov
+Ephraim
+Shmuel
+Wallace
+Yeshua
+Kannon
+Kingsley
+Noa
+TRUE
+Ermias
+Harold
+Joziah
+Rene
+Truce
+Aldo
+Dimitri
+Halo
+Ronnie
+Vance
+Aden
+Ishaan
+Kace
+Stefan`;
+
+// ─── 1000 USA FEMALE NAMES ───
+const USA_FEMALE = `Olivia
+Emma
+Amelia
+Charlotte
+Mia
+Sophia
+Isabella
+Evelyn
+Ava
+Sofia
+Camila
+Harper
+Luna
+Eleanor
+Violet
+Aurora
+Elizabeth
+Eliana
+Hazel
+Chloe
+Ellie
+Nora
+Gianna
+Lily
+Emily
+Aria
+Scarlett
+Penelope
+Zoe
+Ella
+Avery
+Abigail
+Mila
+Lucy
+Isla
+Ivy
+Layla
+Lainey
+Nova
+Grace
+Willow
+Riley
+Emilia
+Naomi
+Elena
+Madison
+Valentina
+Victoria
+Stella
+Delilah
+Maya
+Hannah
+Leah
+Lillian
+Genesis
+Josephine
+Sadie
+Adeline
+Zoey
+Sophie
+Paisley
+Alice
+Ruby
+Eloise
+Madelyn
+Leilani
+Claire
+Addison
+Ayla
+Emery
+Iris
+Eden
+Natalie
+Maria
+Maeve
+Daisy
+Vivian
+Clara
+Autumn
+Liliana
+Everly
+Audrey
+Lyla
+Jade
+Kinsley
+Millie
+Madeline
+Josie
+Kennedy
+Athena
+Melody
+Caroline
+Aaliyah
+Anna
+Sarah
+Quinn
+Lydia
+Lucia
+Allison
+Hailey
+Ailany
+Cora
+Ariana
+Parker
+Natalia
+Gabriella
+Savannah
+Brooklyn
+Bella
+Georgia
+Juniper
+Alaia
+Raelynn
+Hadley
+Rose
+Julia
+Serenity
+Eliza
+Margaret
+Eva
+Amara
+Melanie
+Cecilia
+Ashley
+Rylee
+Margot
+Samantha
+Catalina
+Juliette
+Aubrey
+Esther
+Mary
+Nevaeh
+Skylar
+Alina
+Amira
+Ember
+Magnolia
+Sienna
+Charlie
+Elliana
+Summer
+Alana
+Brielle
+Remi
+Sage
+Valerie
+Hallie
+Wrenley
+Kehlani
+Emerson
+June
+Sloane
+Emersyn
+Elsie
+Oaklynn
+Oakley
+Blakely
+Freya
+Piper
+Valeria
+Arya
+Adalynn
+Everleigh
+Genevieve
+Anastasia
+Isabel
+Peyton
+Amaya
+Isabelle
+Olive
+Ruth
+Ximena
+Evangeline
+Katherine
+Callie
+Rosalie
+Alani
+Lilah
+Kaia
+Brianna
+Bailey
+Phoebe
+Vivienne
+Andrea
+Myla
+Lia
+Sara
+Kylie
+Reese
+Annie
+Daphne
+Ada
+Adaline
+Arianna
+Ariella
+Sutton
+Celeste
+Jasmine
+Mackenzie
+Haven
+Scottie
+Gemma
+Ana
+Tatum
+Arabella
+Lila
+Molly
+Stevie
+Blake
+Aitana
+Alaina
+Wren
+River
+Noelle
+Delaney
+Journee
+Blair
+Adalyn
+Kaylee
+Alexandra
+Mabel
+Norah
+Presley
+Alora
+Vera
+Celine
+Amy
+Brynlee
+Nyla
+Saylor
+Khloe
+Antonella
+Zara
+Aliyah
+Cataleya
+Lennon
+Kiara
+Camille
+Dahlia
+Kaylani
+Mariana
+Diana
+Reagan
+Selena
+Kimberly
+Rachel
+Gracie
+Faith
+Juliana
+Miriam
+Elise
+Noa
+Elaina
+Maisie
+Lilith
+Collins
+Palmer
+Lilly
+Shiloh
+Ophelia
+Elianna
+Lena
+Harmony
+Aspen
+Rowan
+Gia
+Leila
+Jane
+Talia
+Adelaide
+Dakota
+Lola
+Lucille
+Kailani
+Morgan
+Zuri
+Milani
+Daniela
+Selah
+Alessia
+Angela
+Juliet
+Evie
+Amora
+Rory
+Marley
+Sydney
+Alanna
+Leia
+Luciana
+Kamila
+Harlow
+Kali
+Octavia
+Amari
+Sawyer
+Gabriela
+Ariel
+Maggie
+Rosemary
+Ryleigh
+Tessa
+Evelynn
+Londyn
+Danna
+Amina
+Brooke
+Samara
+Kendall
+Rosie
+Alayna
+Angelina
+Francesca
+Adelyn
+Fatima
+Hope
+Nicole
+Nayeli
+Catherine
+Nina
+Journey
+Adriana
+Camilla
+Ailani
+Malia
+Meadow
+Jordyn
+Joanna
+Emory
+Malani
+Serena
+Teagan
+Aurelia
+Vanessa
+Kayla
+Navy
+Poppy
+Kalani
+Regina
+Adelina
+Rebecca
+Ariyah
+Esme
+Heidi
+Aisha
+Julieta
+Thea
+Annabelle
+Esmeralda
+Lauren
+Julianna
+Taylor
+Wrenlee
+London
+Giselle
+Sabrina
+Azalea
+Laura
+Sylvie
+Sylvia
+Alaya
+Raya
+Elora
+Finley
+Mya
+Dream
+Viviana
+Elaine
+Elodie
+Laila
+Sunny
+Briella
+Lana
+Paige
+Itzel
+Mckenna
+Melissa
+Frances
+Mira
+Payton
+Hattie
+Astrid
+Brynn
+Winter
+Aylin
+Miley
+Raven
+Jocelyn
+Maryam
+Logan
+Veronica
+Gwendolyn
+Anya
+Leighton
+Alivia
+Harley
+Charlee
+Alyssa
+Colette
+Hayden
+Lorelai
+Jayla
+Ivory
+Anaya
+Fiona
+Trinity
+Aubree
+Michelle
+Matilda
+Lilliana
+Mallory
+Mariah
+Helena
+Wynter
+Carmen
+Alayah
+Liana
+Holly
+Madilyn
+Phoenix
+Raelyn
+Willa
+Helen
+Emely
+Alessandra
+Gracelynn
+Carolina
+Arleth
+Salem
+Dorothy
+Xiomara
+Elisa
+Reign
+Florence
+Alicia
+Madeleine
+Melany
+Katalina
+Zariah
+Bonnie
+Joy
+Kaliyah
+Haisley
+Sarai
+Blaire
+Elowyn
+Saige
+Adelynn
+Opal
+Demi
+Nylah
+Emmy
+Camryn
+Kira
+Lorelei
+Daleyza
+Raegan
+Maia
+Bianca
+Aniyah
+Annalise
+Alexandria
+Amirah
+Alison
+Anahi
+Gracelyn
+Brooklynn
+Miracle
+Everlee
+Adhara
+Alma
+Macie
+Murphy
+Romina
+Cassidy
+Clementine
+Heaven
+Elle
+Skye
+Destiny
+Lyra
+Rylie
+Paris
+Cameron
+Felicity
+Maddison
+Leona
+Scarlet
+Kora
+Mariam
+Meredith
+Mckenzie
+Dayana
+Cali
+Amanda
+Arielle
+Angel
+Calliope
+Fernanda
+Estella
+April
+Izabella
+Hanna
+Marceline
+Alexis
+Carter
+Daniella
+Marlee
+Virginia
+Kataleya
+Halo
+Nadia
+Amiyah
+Madelynn
+Emerie
+Renata
+Oaklee
+Remington
+Maxine
+Nellie
+Briar
+Danielle
+Charli
+Makenna
+Imani
+Armani
+Edith
+Nalani
+Mae
+Vienna
+Hadassah
+Stephanie
+Ari
+Kate
+Jimena
+Briana
+Faye
+Jordan
+Louise
+Amber
+Makayla
+Zahra
+Lylah
+Margo
+Amoura
+Jennifer
+Kyla
+Mylah
+Winnie
+Alisson
+Amalia
+Reina
+Avianna
+Allie
+Ivanna
+Ariya
+Lilian
+Alia
+Aylani
+Noah
+Reyna
+Lexi
+Brinley
+Iyla
+Mavis
+Lina
+Cecelia
+Eve
+Maren
+Monroe
+Capri
+Emelia
+Jessica
+Halle
+Alejandra
+Gabrielle
+Yara
+Beatrice
+Della
+Kamryn
+Katie
+Ariah
+Arlette
+Noemi
+Alondra
+Maliyah
+Mara
+Jacqueline
+Jazlyn
+Frankie
+Angie
+Eileen
+Lyric
+Aliana
+Sierra
+Rosalia
+Oaklyn
+Chaya
+Amaia
+Leyla
+Holland
+Cleo
+Jream
+Leslie
+Sevyn
+Jolene
+Mina
+Keira
+Legacy
+Tiana
+Elliott
+Cassandra
+Jaylani
+Priscilla
+Rhea
+Kinley
+Clover
+Estrella
+Zariyah
+Journi
+Miranda
+Angelica
+Marlowe
+Jovie
+Abby
+Sariyah
+Kenzie
+Oakleigh
+Aya
+Siena
+Emberly
+Melina
+Amani
+Bristol
+Estelle
+Galilea
+Irene
+Marie
+Marina
+Makenzie
+Sasha
+Paislee
+Isabela
+Goldie
+Myra
+Davina
+Flora
+Anne
+Azariah
+Indie
+Kaitlyn
+Jazmin
+Gloria
+Georgina
+Shelby
+Dallas
+Thalia
+Aliza
+Averie
+Skyler
+Macy
+Rosa
+Dulce
+Khaleesi
+Marilyn
+Martha
+Adley
+Belen
+Ellianna
+Kelsey
+Nia
+Chana
+Lakelynn
+Selene
+Lottie
+Loretta
+Aleena
+Ila
+Dani
+Remy
+Whitley
+Jenna
+Lillie
+Kennedi
+Violeta
+Kendra
+Lennox
+Laney
+Aviana
+Solana
+Veda
+Marigold
+Billie
+Drew
+Dylan
+Ellis
+Gwen
+Amayah
+Milan
+Leilany
+Ryan
+Bridget
+Christina
+Ezra
+Ainsley
+Emerald
+Hana
+Noor
+Rivka
+Amelie
+Jenesis
+Royalty
+Lenora
+Taytum
+Jamie
+Kathryn
+Aileen
+Arlet
+Coraline
+Kiana
+Kyra
+Araceli
+Azaria
+Kenna
+Monica
+Bethany
+Laurel
+Charley
+Karla
+Kayleigh
+Rayna
+Louisa
+Celia
+Emmie
+Fallon
+Persephone
+Winona
+Marisol
+Lara
+Kensley
+Mckinley
+Michaela
+Novalee
+Elyse
+Lacey
+Penny
+Zelda
+Alena
+Luz
+Keilani
+Nala
+Paula
+Birdie
+Karsyn
+Lakelyn
+Miller
+Jemma
+Aleah
+Inaya
+Megan
+Sloan
+Charleigh
+Rosalina
+Andi
+Nola
+Julie
+Adrianna
+Kaeli
+Addilyn
+Freyja
+Ramona
+Samira
+Karina
+Denver
+Janelle
+Mikayla
+Seraphina
+Haley
+Indy
+Paulina
+Rowyn
+Milana
+Chelsea
+Elina
+Milena
+Valery
+Ivey
+Maci
+Stormi
+Brittany
+Madilynn
+Aila
+Yareli
+Yaretzi
+Zaylee
+Erin
+Adele
+Robin
+Jaliyah
+Maisy
+Pearl
+Adalee
+Brynleigh
+Keyla
+Alexa
+Baylor
+Jessie
+Cielo
+Braelynn
+Alianna
+Theodora
+Malaya
+Meilani
+Tallulah
+Analia
+Nyomi
+Promise
+Sol
+Xyla
+Kylee
+Marjorie
+Treasure
+Soleil
+Zaria
+Cynthia
+Luella
+Sky
+Ayleen
+Neriah
+Iliana
+Judith
+Ocean
+Lea
+Linda
+Livia
+Maddie
+Magdalena
+Elia
+Kahlani
+Micah
+Tiffany
+Wrenleigh
+Zaniyah
+Kallie
+Love
+Andie
+Johanna
+Mercy
+Skyla
+Aliya
+Deborah
+Zainab
+Anais
+Greta
+Kaiya
+Malaysia
+Marianna
+Amaris
+Barbara
+Bellamy
+Dalia
+Anika
+Giana
+Keziah
+Nataly
+Cheyenne
+Kelly
+Luisa
+Salma
+Teresa
+Aura
+Carly
+Liv
+Azari
+Dafne
+Rebekah
+Amiri
+Berkley
+Emberlynn
+Hunter
+Jaycee
+Alexia
+Reya
+Ruthie
+Eleanora
+Janiyah
+Rosalyn
+Giuliana
+Emiliana
+Novah
+Tru
+Kori
+Aspyn
+Chandler
+Kailany
+Lilyana
+Elowen
+Khalani
+Naya
+Zyla
+Jolie
+Leanna
+Yamileth
+Cattleya
+Elisabeth
+Ensley
+Ashlyn
+Allyson
+August
+Kimber
+Marleigh
+Soraya
+Anaiah
+Analeia
+Waverly
+Yasmin
+Zora
+Joelle
+Lilia
+Nancy
+Icelynn
+Indigo
+Arely
+Laylani
+Romy
+Scout
+Ayra
+Giovanna
+Siya
+Katelyn
+Madalyn
+Natasha
+Alaiya
+Honey
+Lettie
+Sarahi
+Elsa
+Emmeline
+Hadlee
+Lilianna
+Zendaya
+Ainhoa
+Elliot
+Jazmine
+Aadhya
+Guinevere
+Rayne
+Clare
+Saanvi
+Campbell
+Salome
+Tilly
+Yusra
+Akira
+Henley
+Lyanna
+Quincy
+Rosalee
+Vada
+Ainara
+Annika
+Ayah
+Violette
+Aleia
+Kaya
+Mazie
+Amyra
+Celina
+Mikaela
+Paloma
+Elouise
+Etta
+Julietta
+Kamiyah
+Zoya
+Jayleen
+Kassidy
+Keily
+Harlee
+Kiera
+Liberty
+Darcy
+Dior
+Lisa
+Malka
+Arisbeth
+Kara
+Bailee
+Elani
+Harmoni
+Mariella
+Zayla
+Emi
+Jianna
+Maelynn
+Avani`;
+
+// ─── 1000 USA LAST NAMES ───
+const USA_SURNAMES = `Smith
+Johnson
+Williams
+Brown
+Jones
+Garcia
+Miller
+Davis
+Rodriguez
+Martinez
+Hernandez
+Lopez
+Gonzalez
+Wilson
+Anderson
+Thomas
+Taylor
+Moore
+Jackson
+Martin
+Lee
+Perez
+Thompson
+White
+Harris
+Sanchez
+Clark
+Ramirez
+Lewis
+Robinson
+Walker
+Young
+Allen
+King
+Wright
+Scott
+Torres
+Nguyen
+Hill
+Flores
+Green
+Adams
+Nelson
+Baker
+Hall
+Rivera
+Campbell
+Mitchell
+Carter
+Roberts
+Gomez
+Phillips
+Evans
+Turner
+Diaz
+Parker
+Cruz
+Edwards
+Collins
+Reyes
+Stewart
+Morris
+Morales
+Murphy
+Cook
+Rogers
+Gutierrez
+Ortiz
+Morgan
+Cooper
+Peterson
+Bailey
+Reed
+Kelly
+Howard
+Ramos
+Kim
+Cox
+Ward
+Richardson
+Watson
+Brooks
+Chavez
+Wood
+James
+Bennett
+Gray
+Mendoza
+Ruiz
+Hughes
+Price
+Alvarez
+Castillo
+Sanders
+Patel
+Myers
+Long
+Ross
+Foster
+Jimenez
+Powell
+Jenkins
+Perry
+Russell
+Sullivan
+Bell
+Coleman
+Butler
+Henderson
+Barnes
+Gonzales
+Fisher
+Vasquez
+Simmons
+Romero
+Jordan
+Patterson
+Alexander
+Hamilton
+Graham
+Reynolds
+Griffin
+Wallace
+Moreno
+West
+Cole
+Hayes
+Bryant
+Herrera
+Gibson
+Ellis
+Tran
+Medina
+Aguilar
+Stevens
+Murray
+Ford
+Castro
+Marshall
+Owens
+Harrison
+Fernandez
+Mcdonald
+Woods
+Washington
+Kennedy
+Wells
+Vargas
+Henry
+Chen
+Freeman
+Webb
+Tucker
+Guzman
+Burns
+Crawford
+Olson
+Simpson
+Porter
+Hunter
+Gordon
+Mendez
+Silva
+Shaw
+Snyder
+Mason
+Dixon
+Munoz
+Hunt
+Hicks
+Holmes
+Palmer
+Wagner
+Black
+Robertson
+Boyd
+Rose
+Stone
+Salazar
+Fox
+Warren
+Mills
+Meyer
+Rice
+Schmidt
+Garza
+Daniels
+Ferguson
+Nichols
+Stephens
+Soto
+Weaver
+Ryan
+Gardner
+Payne
+Grant
+Dunn
+Kelley
+Spencer
+Hawkins
+Arnold
+Pierce
+Vazquez
+Hansen
+Peters
+Santos
+Hart
+Bradley
+Knight
+Elliott
+Cunningham
+Duncan
+Armstrong
+Hudson
+Carroll
+Lane
+Riley
+Andrews
+Alvarado
+Ray
+Delgado
+Berry
+Perkins
+Hoffman
+Johnston
+Matthews
+Pena
+Richards
+Contreras
+Willis
+Carpenter
+Lawrence
+Sandoval
+Guerrero
+George
+Chapman
+Rios
+Estrada
+Ortega
+Watkins
+Greene
+Nunez
+Wheeler
+Valdez
+Harper
+Burke
+Larson
+Santiago
+Maldonado
+Morrison
+Franklin
+Carlson
+Austin
+Dominguez
+Carr
+Lawson
+Jacobs
+Obrien
+Lynch
+Singh
+Vega
+Bishop
+Montgomery
+Oliver
+Jensen
+Harvey
+Williamson
+Gilbert
+Dean
+Sims
+Espinoza
+Howell
+Li
+Wong
+Reid
+Hanson
+Le
+Mccoy
+Garrett
+Burton
+Fuller
+Wang
+Weber
+Welch
+Rojas
+Lucas
+Marquez
+Fields
+Park
+Yang
+Little
+Banks
+Padilla
+Day
+Walsh
+Bowman
+Schultz
+Luna
+Fowler
+Mejia
+Davidson
+Acosta
+Brewer
+May
+Holland
+Juarez
+Newman
+Pearson
+Curtis
+Cortez
+Douglas
+Schneider
+Joseph
+Barrett
+Navarro
+Figueroa
+Keller
+Avila
+Wade
+Molina
+Stanley
+Hopkins
+Campos
+Barnett
+Bates
+Chambers
+Caldwell
+Beck
+Lambert
+Miranda
+Byrd
+Craig
+Ayala
+Lowe
+Frazier
+Powers
+Neal
+Leonard
+Gregory
+Carrillo
+Sutton
+Fleming
+Rhodes
+Shelton
+Schwartz
+Norris
+Jennings
+Watts
+Duran
+Walters
+Cohen
+Mcdaniel
+Moran
+Parks
+Steele
+Vaughn
+Becker
+Holt
+Deleon
+Barker
+Terry
+Hale
+Leon
+Hail
+Benson
+Haynes
+Horton
+Miles
+Lyons
+Pham
+Graves
+Bush
+Thornton
+Wolfe
+Warner
+Cabrera
+Mckinney
+Mann
+Zimmerman
+Dawson
+Lara
+Fletcher
+Page
+Mccarthy
+Love
+Robles
+Cervantes
+Solis
+Erickson
+Reeves
+Chang
+Klein
+Salinas
+Fuentes
+Baldwin
+Daniel
+Simon
+Velasquez
+Hardy
+Higgins
+Aguirre
+Lin
+Cummings
+Chandler
+Sharp
+Barber
+Bowen
+Ochoa
+Dennis
+Robbins
+Liu
+Ramsey
+Francis
+Griffith
+Paul
+Blair
+Oconnor
+Cardenas
+Pacheco
+Cross
+Calderon
+Quinn
+Moss
+Swanson
+Chan
+Rivas
+Khan
+Rodgers
+Serrano
+Fitzgerald
+Rosales
+Stevenson
+Christensen
+Manning
+Gill
+Curry
+Mclaughlin
+Harmon
+Mcgee
+Gross
+Doyle
+Garner
+Newton
+Burgess
+Reese
+Walton
+Blake
+Trujillo
+Adkins
+Brady
+Goodman
+Roman
+Webster
+Goodwin
+Fischer
+Huang
+Potter
+Delacruz
+Montoya
+Todd
+Wu
+Hines
+Mullins
+Castaneda
+Malone
+Cannon
+Tate
+Mack
+Sherman
+Hubbard
+Hodges
+Zhang
+Guerra
+Wolf
+Valencia
+Franco
+Saunders
+Rowe
+Gallagher
+Farmer
+Hammond
+Hampton
+Townsend
+Ingram
+Wise
+Gallegos
+Clarke
+Barton
+Schroeder
+Maxwell
+Waters
+Logan
+Camacho
+Strickland
+Norman
+Person
+Colon
+Parsons
+Frank
+Harrington
+Glover
+Osborne
+Buchanan
+Casey
+Floyd
+Patton
+Ibarra
+Ball
+Tyler
+Suarez
+Bowers
+Orozco
+Salas
+Cobb
+Gibbs
+Andrade
+Bauer
+Conner
+Moody
+Escobar
+Mcguire
+Lloyd
+Mueller
+Hartman
+French
+Kramer
+Mcbride
+Pope
+Lindsey
+Velazquez
+Norton
+Mccormick
+Sparks
+Flynn
+Yates
+Hogan
+Marsh
+Macias
+Villanueva
+Zamora
+Pratt
+Stokes
+Owen
+Ballard
+Lang
+Brock
+Villarreal
+Charles
+Drake
+Barrera
+Cain
+Patrick
+Pineda
+Burnett
+Mercado
+Santana
+Shepherd
+Bautista
+Ali
+Shaffer
+Lamb
+Trevino
+Mckenzie
+Hess
+Beil
+Olsen
+Cochran
+Morton
+Nash
+Wilkins
+Petersen
+Briggs
+Shah
+Roth
+Nicholson
+Holloway
+Lozano
+Flowers
+Rangel
+Hoover
+Arias
+Short
+Mora
+Valenzuela
+Bryan
+Meyers
+Weiss
+Underwood
+Bass
+Greer
+Summers
+Houston
+Carson
+Morrow
+Clayton
+Whitaker
+Decker
+Yoder
+Collier
+Zuniga
+Carey
+Wilcox
+Melendez
+Poole
+Roberson
+Larsen
+Conley
+Davenport
+Copeland
+Massey
+Lam
+Huff
+Rocha
+Cameron
+Jefferson
+Hood
+Monroe
+Anthony
+Pittman
+Huynh
+Randall
+Singleton
+Kirk
+Combs
+Mathis
+Christian
+Skinner
+Bradford
+Richard
+Galvan
+Wall
+Boone
+Kirby
+Wilkinson
+Bridges
+Bruce
+Atkinson
+Velez
+Meza
+Roy
+Vincent
+York
+Hodge
+Villa
+Abbott
+Allison
+Tapia
+Gates
+Chase
+Sosa
+Sweeney
+Farrell
+Wyatt
+Dalton
+Horn
+Barron
+Phelps
+Yu
+Dickerson
+Heath
+Foley
+Atkins
+Mathews
+Bonilla
+Acevedo
+Benitez
+Zavala
+Hensley
+Glenn
+Cisneros
+Harrell
+Shields
+Rubio
+Choi
+Huffman
+Boyer
+Garrison
+Arroyo
+Bond
+Kane
+Hancock
+Callahan
+Dillon
+Cline
+Wiggins
+Grimes
+Arellano
+Melton
+Oneill
+Savage
+Ho
+Beltran
+Pitts
+Parrish
+Ponce
+Rich
+Booth
+Koch
+Golden
+Ware
+Brennan
+Mcdowell
+Marks
+Cantu
+Humphrey
+Baxter
+Sawyer
+Clay
+Tanner
+Hutchinson
+Kaur
+Berg
+Wiley
+Gilmore
+Russo
+Villegas
+Hobbs
+Keith
+Wilkerson
+Ahmed
+Beard
+Mcclain
+Montes
+Mata
+Rosario
+Vang
+Walter
+Henson
+Oneal
+Mosley
+Mcclure
+Beasley
+Stephenson
+Snow
+Huerta
+Preston
+Vance
+Barry
+Johns
+Eaton
+Blackwell
+Dyer
+Prince
+Macdonald
+Solomon
+Guevara
+Stafford
+English
+Hurst
+Woodard
+Cortes
+Shannon
+Kemp
+Nolan
+Mccullough
+Merritt
+Murillo
+Moon
+Salgado
+Strong
+Kline
+Cordova
+Barajas
+Roach
+Rosas
+Winters
+Jacobson
+Lester
+Knox
+Bullock
+Kerr
+Leach
+Meadows
+Davila
+Orr
+Whitehead
+Pruitt
+Kent
+Conway
+Mckee
+Barr
+David
+Dejesus
+Marin
+Berger
+Mcintyre
+Blankenship
+Gaines
+Palacios
+Cuevas
+Bartlett
+Durham
+Dorsey
+Mccall
+Odonnell
+Stein
+Browning
+Stout
+Lowery
+Sloan
+Mclean
+Hendricks
+Calhoun
+Sexton
+Chung
+Gentry
+Hull
+Duarte
+Ellison
+Nielsen
+Gillespie
+Buck
+Middleton
+Sellers
+Leblanc
+Esparza
+Hardin
+Bradshaw
+Mcintosh
+Howe
+Livingston
+Frost
+Glass
+Morse
+Knapp
+Herman
+Stark
+Bravo
+Noble
+Spears
+Weeks
+Corona
+Frederick
+Buckley
+Mcfarland
+Hebert
+Enriquez
+Hickman
+Quintero
+Randolph
+Schaefer
+Walls
+Trejo
+House
+Reilly
+Pennington
+Michael
+Conrad
+Giles
+Benjamin
+Crosby
+Fitzpatrick
+Donovan
+Mays
+Mahoney
+Valentine
+Raymond
+Medrano
+Hahn
+Mcmillan
+Small
+Bentley
+Felix
+Peck
+Lucero
+Boyle
+Hanna
+Pace
+Rush
+Hurley
+Harding
+Mcconnell
+Bernal
+Nava
+Ayers
+Everett
+Ventura
+Avery
+Pugh
+Mayer
+Bender
+Shepard
+Mcmahon
+Landry
+Case
+Sampson
+Moses
+Magana
+Blackburn
+Dunlap
+Gould
+Duffy
+Vaughan
+Herring
+Mckay
+Espinosa
+Rivers
+Farley
+Bernard
+Ashley
+Friedman
+Potts
+Truong
+Costa
+Correa
+Blevins
+Nixon
+Clements
+Fry
+Delarosa
+Best
+Benton
+Lugo
+Portillo
+Dougherty
+Crane
+Haley
+Phan
+Villalobos
+Blanchard
+Horne
+Finley
+Quintana
+Lynn
+Esquivel
+Bean
+Dodson
+Mullen
+Xiong
+Hayden
+Cano
+Levy
+Huber
+Richmond
+Moyer
+Lim
+Frye
+Sheppard
+Mccarty
+Avalos
+Booker
+Waller
+Parra
+Woodward
+Jaramillo
+Krueger
+Rasmussen
+Brandt
+Peralta
+Donaldson
+Stuart
+Faulkner
+Maynard
+Galindo
+Coffey
+Estes
+Sanford
+Burch
+Maddox
+Vo
+Oconnell
+Vu
+Andersen
+Spence
+Mcpherson
+Church
+Schmitt
+Stanton
+Leal
+Cherry
+Compton
+Dudley
+Sierra
+Pollard
+Alfaro
+Hester
+Proctor
+Lu
+Hinton
+Novak
+Good
+Madden
+Mccann
+Terrell
+Jarvis
+Dickson
+Reyna
+Cantrell
+Mayo
+Branch
+Hendrix
+Rollins
+Rowland
+Whitney
+Duke
+Odom
+Daugherty
+Travis
+Tang`;
+
+/* ============================================================
+   UTILITY: Hash Function (FNV-1a 32-bit)
+   Produces a deterministic integer from any string.
+   Same input → same output always.
+   ============================================================ */
+function fnv1a32(str) {
+  let hash = 2166136261; // FNV offset basis
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = (hash * 16777619) >>> 0; // FNV prime, keep 32-bit unsigned
+  }
+  return hash;
+}
+
+/* Secondary hash for additional entropy (different salt) */
+function fnv1a32b(str) { return fnv1a32('___salt___' + str + '___2'); }
+function fnv1a32c(str) { return fnv1a32('___salt___' + str + '___3__unique'); }
+
+/* ============================================================
+   UTILITY: Seeded PRNG (Mulberry32)
+   Produces pseudo-random numbers from a numeric seed.
+   ============================================================ */
+function makePRNG(seed) {
+  let s = seed >>> 0;
+  return function() {
+    s += 0x6D2B79F5;
+    let t = s;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+/* String to numeric seed */
+function strToSeed(str) {
+  if (!str) return Math.floor(Math.random() * 2**32);
+  return fnv1a32(str);
+}
+
+/* ============================================================
+   UTILITY: Parse name list textarea → array of strings
+   ============================================================ */
+function parseNameList(text) {
+  return text.split('\n')
+    .map(n => n.trim())
+    .filter(n => n.length > 0);
+}
+
+/* ============================================================
+   UTILITY: Extract candidate name from email local-part
+   Rule 13: if username contains a recognizable name, use it.
+   ============================================================ */
+function extractNameFromUsername(username) {
+  // Remove common suffixes like numbers at end
+  // Split by common separators: dot, underscore, dash, digits
+  const parts = username.toLowerCase()
+    .replace(/\d+/g, '·')
+    .split(/[._\-·]+/)
+    .filter(p => p.length >= 2);
+  return parts; // array of candidate name parts
+}
+
+/* Try to match a username part to a name in our lists */
+function matchNameInList(parts, nameList) {
+  const lowerList = nameList.map(n => n.toLowerCase());
+  for (const part of parts) {
+    const idx = lowerList.indexOf(part);
+    if (idx >= 0) return { name: nameList[idx], index: idx };
+    // Partial match: starts with
+    const partialIdx = lowerList.findIndex(n => n.startsWith(part) || part.startsWith(n));
+    if (partialIdx >= 0 && lowerList[partialIdx].length >= 3) return { name: nameList[partialIdx], index: partialIdx };
+  }
+  return null;
+}
+
+/* ============================================================
+   UTILITY: Parse email list from textarea
+   Accepts: full emails, usernames, comma or newline separated
+   ============================================================ */
+function parseEmailList(raw, allowDups) {
+  // Split by newline or comma
+  const items = raw.split(/[\n,]+/).map(s => s.trim()).filter(s => s.length > 0);
+  const emails = items.map(item => {
+    if (item.includes('@')) return item.toLowerCase();
+    return item.toLowerCase() + '@gmail.com';
+  });
+  if (allowDups) return emails;
+  // Deduplicate preserving order
+  const seen = new Set();
+  return emails.filter(e => { if (seen.has(e)) return false; seen.add(e); return true; });
+}
+
+/* ============================================================
+   MAIN GENERATION LOGIC
+   ============================================================ */
+let generatedResults = []; // store for export / sort / filter
+
+function generateNames() {
+  const emailRaw = document.getElementById('emailInput').value;
+  const allowDups = document.getElementById('allowDuplicates').checked;
+  const genderForce = document.getElementById('genderForce').value;
+  const useRandom = document.getElementById('useRandom').checked;
+  const seedStr = document.getElementById('seedInput').value.trim();
+  const useOpenAI = document.getElementById('useOpenAI').checked;
+  const openAIKey = document.getElementById('openAIKey').value.trim();
+
+  // Get name lists
+  const maleList = parseNameList(document.getElementById('maleNames').value);
+  const femaleList = parseNameList(document.getElementById('femaleNames').value);
+  const surnameList = parseNameList(document.getElementById('surnameNames').value);
+
+  // Validate
+  showAlert('', '');
+  if (!emailRaw.trim()) { showAlert('error', '⚠️ Please paste at least one Gmail address.'); return; }
+  if (maleList.length === 0 && femaleList.length === 0) { showAlert('error', '⚠️ Name lists are empty. Load example lists or add names.'); return; }
+  if (surnameList.length === 0) { showAlert('error', '⚠️ Surname list is empty. Load example lists or add surnames.'); return; }
+
+  const emails = parseEmailList(emailRaw, allowDups);
+  if (emails.length === 0) { showAlert('error', '⚠️ No valid emails found.'); return; }
+
+  // Setup PRNG if random mode
+  const prng = useRandom ? makePRNG(strToSeed(seedStr)) : null;
+
+  // Show progress for large lists
+  const progressWrap = document.getElementById('progressWrap');
+  const progressFill = document.getElementById('progressFill');
+  const progressLabel = document.getElementById('progressLabel');
+  if (emails.length > 100) {
+    progressWrap.classList.add('visible');
+    progressFill.style.width = '0%';
+  }
+
+  const usedNames = new Set(); // track First+Last pairs for uniqueness
+  const results = [];
+  let collisions = 0;
+  let maleCount = 0, femaleCount = 0;
+
+  const CHUNK = 500;
+  let idx = 0;
+
+  function processChunk() {
+    const end = Math.min(idx + CHUNK, emails.length);
+    for (; idx < end; idx++) {
+      const email = emails[idx];
+      const local = email.split('@')[0];
+      const domain = email.includes('@') ? email.split('@')[1] : 'gmail.com';
+      const usernameParts = extractNameFromUsername(local);
+
+      let gender, firstName, lastName;
+
+      if (prng) {
+        // ── RANDOM MODE ──
+        const effectiveGender = genderForce === 'hash' || genderForce === 'mixed'
+          ? (prng() < 0.5 ? 'male' : 'female')
+          : genderForce;
+        gender = effectiveGender;
+
+        let pool = gender === 'male' ? maleList : femaleList;
+        if (pool.length === 0) pool = gender === 'male' ? femaleList : maleList;
+
+        firstName = pool[Math.floor(prng() * pool.length)];
+        lastName = surnameList[Math.floor(prng() * surnameList.length)];
+      } else {
+        // ── DETERMINISTIC MODE (default) ──
+        const h1 = fnv1a32(email);
+        const h2 = fnv1a32b(email);
+        const h3 = fnv1a32c(email);
+
+        // Gender selection
+        let effectiveGender;
+        if (genderForce === 'male') effectiveGender = 'male';
+        else if (genderForce === 'female') effectiveGender = 'female';
+        else if (genderForce === 'mixed') effectiveGender = (idx % 2 === 0) ? 'male' : 'female';
+        else effectiveGender = (h1 % 2 === 0) ? 'male' : 'female';
+
+        gender = effectiveGender;
+        let pool = gender === 'male' ? maleList : femaleList;
+        if (pool.length === 0) { pool = gender === 'male' ? femaleList : maleList; gender = gender === 'male' ? 'female' : 'male'; }
+
+        // Rule 13: Try to match username to a name in the list first
+        const nameMatch = matchNameInList(usernameParts, pool);
+        if (nameMatch) {
+          firstName = nameMatch.name;
+        } else {
+          // Check all parts in both lists
+          const anyMatch = matchNameInList(usernameParts, maleList) || matchNameInList(usernameParts, femaleList);
+          if (anyMatch) {
+            // Determine which list matched
+            const maleMatch = matchNameInList(usernameParts, maleList);
+            const femaleMatch = matchNameInList(usernameParts, femaleList);
+            if (maleMatch && !femaleMatch) { gender = 'male'; pool = maleList; firstName = maleMatch.name; }
+            else if (femaleMatch && !maleMatch) { gender = 'female'; pool = femaleList; firstName = femaleMatch.name; }
+            else if (maleMatch) { firstName = maleMatch.name; }
+            else { firstName = femaleMatch.name; }
+          } else {
+            firstName = pool[h2 % pool.length];
+          }
+        }
+
+        // Surname: hash-based, with username influence
+        const surnameMatch = matchNameInList(usernameParts, surnameList);
+        if (surnameMatch) {
+          lastName = surnameMatch.name;
+        } else {
+          lastName = surnameList[h3 % surnameList.length];
+        }
+      }
+
+      // Gender label update
+      if (gender === 'male') maleCount++; else femaleCount++;
+
+      // ── UNIQUENESS ENFORCEMENT ──
+      let finalFirst = firstName;
+      let finalLast = lastName;
+      let key = (finalFirst + '|' + finalLast).toLowerCase();
+      let suffix = 2;
+      let isCollision = false;
+
+      if (usedNames.has(key)) {
+        isCollision = true;
+        collisions++;
+        // Try rotating to next surname first
+        const baseSurnameIdx = surnameList.indexOf(lastName);
+        let resolved = false;
+        for (let attempt = 1; attempt < Math.min(surnameList.length, 20); attempt++) {
+          const tryLast = surnameList[(baseSurnameIdx + attempt) % surnameList.length];
+          const tryKey = (finalFirst + '|' + tryLast).toLowerCase();
+          if (!usedNames.has(tryKey)) {
+            finalLast = tryLast;
+            key = tryKey;
+            resolved = true;
+            break;
+          }
+        }
+        // If still not resolved, append numeric suffix
+        if (!resolved) {
+          while (usedNames.has(key)) {
+            finalLast = lastName + '_' + suffix;
+            key = (finalFirst + '|' + finalLast).toLowerCase();
+            suffix++;
+          }
+        }
+      }
+
+      usedNames.add(key);
+      results.push({
+        index: idx + 1,
+        email,
+        local,
+        domain,
+        first: finalFirst,
+        last: finalLast,
+        gender,
+        collision: isCollision
+      });
+    }
+
+    const pct = Math.round((idx / emails.length) * 100);
+    progressFill.style.width = pct + '%';
+    progressLabel.textContent = `Processing… ${idx} / ${emails.length}`;
+
+    if (idx < emails.length) {
+      setTimeout(processChunk, 0); // yield to browser
+    } else {
+      // Done
+      progressWrap.classList.remove('visible');
+      progressFill.style.width = '0%';
+
+      generatedResults = results;
+      renderTable(results);
+      updateStats(emails.length, results.length, collisions, maleCount, femaleCount);
+      showAlert('success', `✅ Generated ${results.length} name${results.length !== 1 ? 's' : ''} successfully.`);
+
+      // Optional OpenAI enhancement
+      if (useOpenAI && openAIKey) {
+        enhanceWithOpenAI(results, openAIKey);
+      }
+    }
+  }
+
+  processChunk();
+}
+
+/* ============================================================
+   RENDER TABLE
+   ============================================================ */
+function renderTable(data) {
+  const tbody = document.getElementById('resultsBody');
+  tbody.innerHTML = '';
+  const frag = document.createDocumentFragment();
+
+  data.forEach(row => {
+    const tr = document.createElement('tr');
+    tr.dataset.email = row.email.toLowerCase();
+    tr.dataset.first = row.first.toLowerCase();
+    tr.dataset.last = row.last.toLowerCase();
+    tr.dataset.gender = row.gender;
+    tr.dataset.index = row.index;
+
+    tr.innerHTML = `
+      <td class="row-num">${row.index}</td>
+      <td>${escapeHtml(row.email)}</td>
+      <td>${escapeHtml(row.first)}</td>
+      <td>${escapeHtml(row.last)}${row.collision ? '<span class="collision-mark" title="Collision resolved">⭐</span>' : ''}</td>
+      <td><span class="gender-badge ${row.gender}">${row.gender}</span></td>
+    `;
+    frag.appendChild(tr);
+  });
+
+  tbody.appendChild(frag);
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('resultsSection').style.display = 'block';
+  document.getElementById('showingCount').textContent = data.length;
+  document.getElementById('totalCount').textContent = data.length;
+
+  // Reset search
+  document.getElementById('searchInput').value = '';
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ============================================================
+   SEARCH / FILTER
+   ============================================================ */
+function filterTable() {
+  const q = document.getElementById('searchInput').value.toLowerCase().trim();
+  const showMaleOnly = document.getElementById('filterMale').checked;
+  const showFemaleOnly = document.getElementById('filterFemale').checked;
+  const rows = document.querySelectorAll('#resultsBody tr');
+  let visible = 0;
+
+  rows.forEach(tr => {
+    const email = tr.dataset.email;
+    const first = tr.dataset.first;
+    const last = tr.dataset.last;
+    const gender = tr.dataset.gender;
+
+    const matchesSearch = !q || email.includes(q) || first.includes(q) || last.includes(q);
+    const matchesGender = (!showMaleOnly && !showFemaleOnly) ||
+      (showMaleOnly && gender === 'male') || (showFemaleOnly && gender === 'female');
+
+    if (matchesSearch && matchesGender) { tr.style.display = ''; visible++; }
+    else tr.style.display = 'none';
+  });
+
+  document.getElementById('showingCount').textContent = visible;
+}
+
+/* ============================================================
+   SORT TABLE
+   ============================================================ */
+let currentSortCol = 'index';
+let currentSortAsc = true;
+
+function setSortCol(col) {
+  if (currentSortCol === col) currentSortAsc = !currentSortAsc;
+  else { currentSortCol = col; currentSortAsc = true; }
+  document.getElementById('sortCol').value = col;
+  document.getElementById('sortAsc').checked = currentSortAsc;
+  renderSortIcons();
+  sortTable();
+}
+
+function sortTable() {
+  currentSortCol = document.getElementById('sortCol').value;
+  currentSortAsc = document.getElementById('sortAsc').checked;
+  renderSortIcons();
+
+  const sorted = [...generatedResults].sort((a, b) => {
+    let va = a[currentSortCol], vb = b[currentSortCol];
+    if (currentSortCol === 'index') { va = Number(va); vb = Number(vb); }
+    else { va = String(va).toLowerCase(); vb = String(vb).toLowerCase(); }
+    if (va < vb) return currentSortAsc ? -1 : 1;
+    if (va > vb) return currentSortAsc ? 1 : -1;
+    return 0;
+  });
+  renderTable(sorted);
+  filterTable();
+}
+
+function renderSortIcons() {
+  ['index','email','first','last','gender'].forEach(col => {
+    const el = document.getElementById('si-' + col);
+    if (!el) return;
+    el.textContent = currentSortCol === col ? (currentSortAsc ? '▲' : '▼') : '';
+  });
+}
+
+/* ============================================================
+   STATS
+   ============================================================ */
+function updateStats(total, unique, collisions, maleC, femaleC) {
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statUnique').textContent = unique;
+  document.getElementById('statCollisions').textContent = collisions;
+  document.getElementById('statMale').textContent = maleC;
+  document.getElementById('statFemale').textContent = femaleC;
+}
+
+/* ============================================================
+   COPY & DOWNLOAD
+   ============================================================ */
+function getFormatted(row, template) {
+  return template
+    .replace(/{email}/g, row.email)
+    .replace(/{first}/g, row.first)
+    .replace(/{last}/g, row.last)
+    .replace(/{gender}/g, row.gender);
+}
+
+function getVisibleRows() {
+  // Return only currently visible rows from the table (respects filter)
+  const rows = document.querySelectorAll('#resultsBody tr:not([style*="display: none"])');
+  const indices = new Set([...rows].map(r => parseInt(r.dataset.index)));
+  return generatedResults.filter(r => indices.has(r.index));
+}
+
+function copyToClipboard(mode) {
+  const rows = getVisibleRows();
+  if (rows.length === 0) { showAlert('error', '⚠️ No results to copy.'); return; }
+
+  let text = '';
+
+  if (mode === 'all') {
+    // CSV format
+    text = 'Email,First Name,Last Name,Gender\n' + rows.map(r =>
+      `${csvEscape(r.email)},${csvEscape(r.first)},${csvEscape(r.last)},${r.gender}`).join('\n');
+  } else if (mode === 'formatted') {
+    const template = document.getElementById('outputFormat').value || '{email},{first},{last},{gender}';
+    text = rows.map(r => getFormatted(r, template)).join('\n');
+  } else if (mode === 'column') {
+    const colMode = document.getElementById('copyColumnSelect').value;
+    text = rows.map(r => {
+      if (colMode === 'email') return r.email;
+      if (colMode === 'name') return r.first + ' ' + r.last;
+      if (colMode === 'email_name') return r.email + '\t' + r.first + ' ' + r.last;
+      if (colMode === 'first') return r.first;
+      if (colMode === 'last') return r.last;
+      return r.email;
+    }).join('\n');
+  }
+
+  navigator.clipboard.writeText(text).then(() => {
+    showAlert('success', `✅ Copied ${rows.length} row(s) to clipboard.`);
+    flashBtn('copyAllBtn');
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+    showAlert('success', `✅ Copied ${rows.length} row(s).`);
+  });
+}
+
+function csvEscape(val) {
+  if (val.includes(',') || val.includes('"') || val.includes('\n')) return '"' + val.replace(/"/g,'""') + '"';
+  return val;
+}
+
+function downloadFile(type) {
+  const rows = getVisibleRows();
+  if (rows.length === 0) { showAlert('error', '⚠️ No results to download.'); return; }
+
+  let content, filename, mime;
+
+  if (type === 'csv') {
+    content = 'Email,First Name,Last Name,Gender\n' +
+      rows.map(r => `${csvEscape(r.email)},${csvEscape(r.first)},${csvEscape(r.last)},${r.gender}`).join('\n');
+    filename = 'gmail-names.csv';
+    mime = 'text/csv;charset=utf-8;';
+  } else {
+    content = rows.map(r => `${r.email},${r.first},${r.last},${r.gender}`).join('\n');
+    filename = 'gmail-names.txt';
+    mime = 'text/plain;charset=utf-8;';
+  }
+
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+  showAlert('success', `✅ Downloaded ${filename}`);
+}
+
+function flashBtn(id) {
+  const btn = document.getElementById(id);
+  if (btn) { btn.classList.add('flash'); setTimeout(() => btn.classList.remove('flash'), 500); }
+}
+
+/* ============================================================
+   FORMAT TEMPLATE TOKEN INSERT
+   ============================================================ */
+function insertToken(token) {
+  const input = document.getElementById('outputFormat');
+  const start = input.selectionStart, end = input.selectionEnd;
+  const val = input.value;
+  input.value = val.slice(0, start) + token + val.slice(end);
+  input.setSelectionRange(start + token.length, start + token.length);
+  input.focus();
+}
+
+/* ============================================================
+   NAME LIST MANAGEMENT
+   ============================================================ */
+function loadExampleLists() {
+  document.getElementById('maleNames').value = USA_MALE;
+  document.getElementById('femaleNames').value = USA_FEMALE;
+  document.getElementById('surnameNames').value = USA_SURNAMES;
+  updateCounts();
+  showAlert('success', '✅ 1000 USA Male Names, 1000 USA Female Names & 1000 Last Names loaded.');
+}
+
+function clearLists() {
+  document.getElementById('maleNames').value = '';
+  document.getElementById('femaleNames').value = '';
+  document.getElementById('surnameNames').value = '';
+  updateCounts();
+  showAlert('info', 'ℹ️ All name lists cleared.');
+}
+
+function saveToLocalStorage() {
+  localStorage.setItem('gmailgen_male', document.getElementById('maleNames').value);
+  localStorage.setItem('gmailgen_female', document.getElementById('femaleNames').value);
+  localStorage.setItem('gmailgen_surnames', document.getElementById('surnameNames').value);
+  showAlert('success', '✅ Lists saved to localStorage.');
+}
+
+function loadFromLocalStorage() {
+  const m = localStorage.getItem('gmailgen_male');
+  const f = localStorage.getItem('gmailgen_female');
+  const s = localStorage.getItem('gmailgen_surnames');
+  if (!m && !f && !s) { showAlert('error', '⚠️ No saved lists found in localStorage.'); return; }
+  if (m) document.getElementById('maleNames').value = m;
+  if (f) document.getElementById('femaleNames').value = f;
+  if (s) document.getElementById('surnameNames').value = s;
+  updateCounts();
+  showAlert('success', '✅ Lists loaded from localStorage.');
+}
+
+function updateCounts() {
+  const mc = parseNameList(document.getElementById('maleNames').value).length;
+  const fc = parseNameList(document.getElementById('femaleNames').value).length;
+  const sc = parseNameList(document.getElementById('surnameNames').value).length;
+  document.getElementById('maleCount').textContent = mc;
+  document.getElementById('femaleCount').textContent = fc;
+  document.getElementById('surnameCount').textContent = sc;
+}
+
+/* ============================================================
+   TABS
+   ============================================================ */
+function switchTab(name) {
+  ['male','female','surname'].forEach(t => {
+    document.getElementById('tab-' + t).classList.toggle('active', t === name);
+    document.getElementById('tc-' + t).classList.toggle('active', t === name);
+  });
+}
+
+/* ============================================================
+   COLLAPSIBLE
+   ============================================================ */
+function toggleCollapse(id) {
+  const panel = document.getElementById(id);
+  const icon = document.getElementById('openaiToggleIcon');
+  if (panel.style.maxHeight === '0px' || panel.style.maxHeight === '') {
+    panel.style.maxHeight = '600px';
+    if (icon) icon.textContent = '▲';
+  } else {
+    panel.style.maxHeight = '0px';
+    if (icon) icon.textContent = '▼';
+  }
+}
+
+/* ============================================================
+   TOGGLE RANDOM SEED INPUT
+   ============================================================ */
+function toggleRandomSeed() {
+  document.getElementById('seedRow').style.display =
+    document.getElementById('useRandom').checked ? 'block' : 'none';
+}
+
+/* ============================================================
+   SAMPLE DATA
+   ============================================================ */
+function loadSampleEmails() {
+  document.getElementById('emailInput').value = [
+    'john.doe@gmail.com',
+    'shahinur',
+    'user123@gmail.com',
+    'alice.wonder@gmail.com',
+    'michael.scott',
+    'emily.rose123@gmail.com',
+    'david_smith',
+    'sarah.j@gmail.com',
+    'robert.brown@gmail.com',
+    'jessica_lee',
+    'christopher.wilson',
+    'amanda.jones@gmail.com',
+    'daniel.martinez@gmail.com',
+    'olivia_garcia',
+    'matthew.taylor@gmail.com',
+    'sophia.anderson',
+    'james.thomas123',
+    'emma.white@gmail.com',
+    'william_harris',
+    'isabella.clark@gmail.com'
+  ].join('\n');
+  showAlert('info', 'ℹ️ Sample emails loaded. Click Generate Names!');
+}
+
+function clearEmails() {
+  document.getElementById('emailInput').value = '';
+}
+
+/* ============================================================
+   ALERT / NOTIFICATION
+   ============================================================ */
+function showAlert(type, message) {
+  const box = document.getElementById('alertBox');
+  box.className = 'alert';
+  if (!type || !message) { box.classList.remove('visible'); return; }
+  box.classList.add('visible', 'alert-' + type);
+  box.textContent = message;
+  if (type === 'success' || type === 'info') {
+    setTimeout(() => { box.classList.remove('visible'); }, 4000);
+  }
+}
+
+/* ============================================================
+   OPTIONAL: OpenAI Integration
+   Calls GPT API to get creative names for each email.
+   Completely optional – falls back to local algorithm if unavailable.
+   ============================================================ */
+async function enhanceWithOpenAI(results, apiKey) {
+  // OpenAI API Endpoint (replace if using a proxy):
+  const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
+  const model = document.getElementById('openAIModel').value;
+
+  showAlert('info', '🤖 Calling OpenAI for creative names… (this may take a moment)');
+
+  // Process in batches of 10 to avoid huge prompts
+  const batchSize = 10;
+  const updatedResults = [...results];
+
+  for (let i = 0; i < results.length; i += batchSize) {
+    const batch = results.slice(i, i + batchSize);
+    const emailList = batch.map(r => r.email).join('\n');
+
+    const prompt = `For each Gmail address below, suggest a creative, realistic first name and last name.
+Return ONLY a JSON array like: [{"email":"...", "first":"...", "last":"...", "gender":"male or female"}, ...]
+Emails:\n${emailList}`;
+
+    try {
+      const response = await fetch(OPENAI_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 500,
+          temperature: 0.7
+        })
+      });
+
+      if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
+      const data = await response.json();
+      const text = data.choices?.[0]?.message?.content || '[]';
+
+      // Extract JSON array from response
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const aiNames = JSON.parse(jsonMatch[0]);
+        aiNames.forEach(aiRow => {
+          const idx = updatedResults.findIndex(r => r.email === aiRow.email);
+          if (idx >= 0 && aiRow.first && aiRow.last) {
+            updatedResults[idx].first = aiRow.first;
+            updatedResults[idx].last = aiRow.last;
+            if (aiRow.gender) updatedResults[idx].gender = aiRow.gender;
+          }
+        });
+      }
+    } catch (e) {
+      console.error('OpenAI error:', e);
+      showAlert('error', `⚠️ OpenAI error: ${e.message}. Using local names.`);
+      return;
+    }
+  }
+
+  generatedResults = updatedResults;
+  renderTable(updatedResults);
+  showAlert('success', '✅ OpenAI creative names applied!');
+}
+
+/* ============================================================
+   KEYBOARD ACCESSIBILITY
+   ============================================================ */
+document.addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    generateNames();
+  }
+});
+
+/* ============================================================
+   INITIALIZATION
+   ============================================================ */
+(function init() {
+  // Load the 1000 USA name lists by default
+  loadExampleLists();
+
+  // Try to load from localStorage if available
+  const savedMale = localStorage.getItem('gmailgen_male');
+  // Only override if user has previously saved custom lists
+  // We check a version flag to avoid overwriting defaults
+  const savedVersion = localStorage.getItem('gmailgen_version');
+  if (savedMale && savedVersion === '2') {
+    loadFromLocalStorage();
+  }
+
+  // Check if keyboard shortcut hint should show
+  console.log('Gmail Name Generator ready. Press Ctrl+Enter to generate.');
+})();
+</script>
+
+<!-- ═══════════════════ FOOTER ═══════════════════ -->
+<footer style="text-align:center;padding:1.5rem;font-size:.75rem;color:var(--text-muted);border-top:1px solid var(--border);margin-top:1rem;background:var(--surface);">
+  Gmail Name Generator · 100% Client-Side · No data sent to any server (unless OpenAI is enabled) · Press <kbd style="background:var(--border);padding:.1rem .4rem;border-radius:4px;">Ctrl+Enter</kbd> to generate
+</footer>
+
+</body>
+</html>
